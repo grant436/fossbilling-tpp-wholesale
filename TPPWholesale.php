@@ -178,43 +178,50 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     {
         $contact = $domain->getContactRegistrar();
 
-        // Split phone number into components TPP requires
-        // FOSSBilling stores phone as e.g. +6421123456
-        $phone = preg_replace('/[^0-9]/', '', $contact->getTel() ?? '6400000000');
+        // Log all contact details for debugging
+        $this->getLog()->debug('TPP createContact details: ' . json_encode([
+            'firstName'  => $contact->getFirstName(),
+            'lastName'   => $contact->getLastName(),
+            'email'      => $contact->getEmail(),
+            'company'    => $contact->getCompany(),
+            'address1'   => $contact->getAddress1(),
+            'city'       => $contact->getCity(),
+            'state'      => $contact->getState(),
+            'zip'        => $contact->getZip(),
+            'country'    => $contact->getCountry(),
+            'telCc'      => $contact->getTelCc(),
+            'tel'        => $contact->getTel(),
+        ]));
 
-        // Determine country code and local number
-        // NZ = 64, AU = 61
-        $phoneCountryCode = '64';
-        $phoneAreaCode    = '0';
-        $phoneNumber      = $phone;
+        // Use getTelCc() and getTel() separately — they are stored as separate fields
+        $phoneCountryCode = $contact->getTelCc() ?? '64';
+        $phoneNumber      = $contact->getTel() ?? '000000000';
 
-        if (str_starts_with($phone, '64')) {
-            $phoneCountryCode = '64';
-            $phoneAreaCode    = '0';
-            $phoneNumber      = substr($phone, 2);
-        } elseif (str_starts_with($phone, '61')) {
-            $phoneCountryCode = '61';
-            $phoneAreaCode    = '0';
-            $phoneNumber      = substr($phone, 2);
-        }
+        // Strip any non-numeric characters from both
+        $phoneCountryCode = preg_replace('/[^0-9]/', '', $phoneCountryCode);
+        $phoneNumber      = preg_replace('/[^0-9]/', '', $phoneNumber);
+
+        // Default to NZ if still empty
+        if (empty($phoneCountryCode)) $phoneCountryCode = '64';
+        if (empty($phoneNumber))      $phoneNumber      = '000000000';
 
         $params = [
             'SessionID'        => $sessionId,
             'Type'             => 'Domains',
             'Object'           => 'Contact',
             'Action'           => 'Create',
-            'FirstName'        => $contact->getFirstName(),
-            'LastName'         => $contact->getLastName(),
-            'Address1'         => $contact->getAddress1(),
+            'FirstName'        => $contact->getFirstName() ?? 'Unknown',
+            'LastName'         => $contact->getLastName() ?? 'Unknown',
+            'Address1'         => $contact->getAddress1() ?? 'Unknown',
             'Address2'         => $contact->getAddress2() ?? '',
-            'City'             => $contact->getCity(),
+            'City'             => $contact->getCity() ?? 'Unknown',
             'Region'           => $contact->getState() ?? 'N/A',
-            'PostalCode'       => $contact->getZip(),
-            'CountryCode'      => $contact->getCountry(),
+            'PostalCode'       => $contact->getZip() ?? '0000',
+            'CountryCode'      => $contact->getCountry() ?? 'NZ',
             'PhoneCountryCode' => $phoneCountryCode,
-            'PhoneAreaCode'    => $phoneAreaCode,
+            'PhoneAreaCode'    => '0',
             'PhoneNumber'      => $phoneNumber,
-            'Email'            => $contact->getEmail(),
+            'Email'            => $contact->getEmail() ?? 'unknown@unknown.com',
         ];
 
         // Add organisation if present
@@ -222,10 +229,13 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             $params['OrganisationName'] = $contact->getCompany();
         }
 
+        $this->getLog()->debug('TPP createContact params: ' . json_encode($params));
+
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        // Response: "OK: ContactID"
+        $this->getLog()->debug('TPP createContact response: ' . $response);
+
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP contact creation failed: ' . $response);
         }
