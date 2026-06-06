@@ -180,7 +180,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
 
         // Split phone number into components TPP requires
         // FOSSBilling stores phone as e.g. +6421123456
-        $phone = preg_replace('/[^0-9]/', '', $contact->getTel());
+        $phone = preg_replace('/[^0-9]/', '', $contact->getTel() ?? '6400000000');
 
         // Determine country code and local number
         // NZ = 64, AU = 61
