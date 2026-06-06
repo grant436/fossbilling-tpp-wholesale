@@ -19,6 +19,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     private string $accountNo;
     private string $userId;
     private string $password;
+    private string $accountRef;
 
     /**
      * Constructor - receives config values from FOSSBilling admin settings
@@ -32,6 +33,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         $this->accountNo = $options['account_no'];
         $this->userId    = $options['user_id'];
         $this->password  = $options['password'];
+        $this->accountRef = $options['account_ref'] ?? '';
     }
 
     /**
@@ -54,6 +56,10 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
                     'label'    => 'Password (API Password)',
                     'required' => true,
                 ]],
+                'account_ref' => ['text', [
+                'label'       => 'Console Account Reference (e.g. SER-993)',
+                'required'    => false,
+            ]],
             ],
         ];
     }
@@ -277,6 +283,8 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'Action'                 => 'Create',
             'Domain'                 => $domain->getName(),
             'Period'                 => $domain->getRegistrationPeriod(),
+            'AccountOption'          => 'CONSOLE',
+            'AccountID'              => $this->accountRef,
             'OwnerContactID'         => $contactId,
             'AdministrationContactID'=> $contactId,
             'TechnicalContactID'     => $contactId,
@@ -386,6 +394,8 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'Type'                    => 'Domains',
             'Object'                  => 'Domain',
             'Action'                  => 'TransferRequest',
+            'AccountOption'           => 'CONSOLE',
+            'AccountID'               => $this->accountRef,
             'Domain'                  => $domain->getName(),
             'DomainPassword'          => $domain->getEpp(),
             'OwnerContactID'          => $contactId,
