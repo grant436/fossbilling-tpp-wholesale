@@ -34,6 +34,11 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         $this->userId    = $options['user_id'];
         $this->password  = $options['password'];
         $this->accountRef = $options['account_ref'] ?? '';
+        // Auto-derive account reference from User ID if not explicitly set
+        // e.g. "SER-993-API" becomes "SER-993"
+        if (empty($this->accountRef) && str_ends_with($this->userId, '-API')) {
+            $this->accountRef = substr($this->userId, 0, -4);
+        }
     }
 
     /**
