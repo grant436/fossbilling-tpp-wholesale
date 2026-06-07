@@ -30,14 +30,20 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             throw new Registrar_Exception('TPP Wholesale credentials are not configured.');
         }
 
-        $this->accountNo = $options['account_no'];
-        $this->userId    = $options['user_id'];
-        $this->password  = $options['password'];
+        $this->accountNo  = $options['account_no'];
+        $this->userId     = $options['user_id'];
+        $this->password   = $options['password'];
         $this->accountRef = $options['account_ref'] ?? '';
+
         // Auto-derive account reference from User ID if not explicitly set
         // e.g. "SER-993-API" becomes "SER-993"
         if (empty($this->accountRef) && str_ends_with($this->userId, '-API')) {
             $this->accountRef = substr($this->userId, 0, -4);
+        }
+
+        // Honour FOSSBilling test mode flag
+        if (isset($options['test_mode']) && $options['test_mode']) {
+            $this->_testMode = true;
         }
     }
 
@@ -62,19 +68,33 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
                     'required' => true,
                 ]],
                 'account_ref' => ['text', [
-                'label'       => 'Console Account Reference (e.g. SER-993)',
-                'required'    => false,
-            ]],
+                    'label'    => 'Console Account Reference (e.g. SER-993)',
+                    'required' => false,
+                ]],
             ],
         ];
     }
 
     /**
-     * Authenticate with TPP API and return a session ID
-     * Session expires after 15 minutes of inactivity
+     * Log a message at INFO level, prefixed with test mode indicator if active
+     */
+    private function log(string $message): void
+    {
+        $prefix = $this->_testMode ? '[TEST MODE] ' : '';
+        $this->getLog()->info($prefix . $message);
+    }
+
+    /**
+     * Authenticate with TPP API and return a session ID.
+     * In test mode, returns a fake session ID without calling the API.
      */
     private function authenticate(): string
     {
+        if ($this->_testMode) {
+            $this->log('TPP authenticate: skipping — test mode active, returning fake session ID');
+            return 'TEST-SESSION-ID';
+        }
+
         $url = self::API_BASE . 'auth.pl?' . http_build_query([
             'AccountNo' => $this->accountNo,
             'UserId'    => $this->userId,
@@ -82,20 +102,26 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         ]);
 
         $response = $this->httpGet($url);
+        $this->log('TPP authenticate response: ' . $response);
 
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP Wholesale authentication failed: ' . $response);
         }
 
-        // Response is "OK: SessionID" — extract the session ID
         return trim(substr($response, 3));
     }
 
     /**
-     * Perform a GET request to the TPP API
+     * Perform a GET request to the TPP API.
+     * In test mode, logs the URL and returns a fake OK response.
      */
     private function httpGet(string $url): string
     {
+        if ($this->_testMode) {
+            $this->log('TPP httpGet [TEST MODE — not sent]: ' . $url);
+            return 'OK: TEST-RESPONSE';
+        }
+
         $client   = $this->getHttpClient();
         $response = $client->request('GET', $url);
 
@@ -124,7 +150,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function isDomainAvailable(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Checking availability for ' . $domain->getName());
+        $this->log('TPP isDomainAvailable: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -137,17 +163,17 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         ]);
 
         $response = $this->httpGet($url);
+        $this->log('TPP isDomainAvailable response: ' . $response);
 
-        // Response format: "domain.co.nz: OK: Minimum=1&Maximum=10"
-        // or "domain.co.nz: ERR: 304,Domain is not available"
-        $this->getLog()->info('TPP availability response: ' . $response);
+        if ($this->_testMode) {
+            $this->log('TPP isDomainAvailable: returning true in test mode');
+            return true;
+        }
 
-        // Domain is available if response contains OK:
         if (str_contains($response, 'OK:')) {
             return true;
         }
 
-        // ERR: 304 means taken, anything else is a real error
         if (str_contains($response, '304')) {
             return false;
         }
@@ -160,7 +186,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function isDomaincanBeTransferred(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Checking transfer eligibility for ' . $domain->getName());
+        $this->log('TPP isDomaincanBeTransferred: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -173,24 +199,25 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         ]);
 
         $response = $this->httpGet($url);
+        $this->log('TPP isDomaincanBeTransferred response: ' . $response);
 
-        if (str_contains($response, 'OK:')) {
+        if ($this->_testMode) {
             return true;
         }
 
-        return false;
+        return str_contains($response, 'OK:');
     }
 
     /**
-     * Create a contact in TPP and return the Contact ID
-     * This must be called before registering or transferring a domain
+     * Create a contact in TPP and return the Contact ID.
+     * In test mode, logs all fields and returns a fake contact ID.
      */
     private function createContact(string $sessionId, Registrar_Domain $domain): string
     {
         $contact = $domain->getContactRegistrar();
 
         // Log all contact details for debugging
-        $this->getLog()->info('TPP createContact details: ' . json_encode([
+        $this->log('TPP createContact details: ' . json_encode([
             'firstName'  => $contact->getFirstName(),
             'lastName'   => $contact->getLastName(),
             'email'      => $contact->getEmail(),
@@ -204,15 +231,13 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'tel'        => $contact->getTel(),
         ]));
 
-        // Use getTelCc() and getTel() separately — they are stored as separate fields
+        // Use getTelCc() and getTel() separately — stored as separate fields in FOSSBilling
         $phoneCountryCode = $contact->getTelCc() ?? '64';
         $phoneNumber      = $contact->getTel() ?? '000000000';
 
-        // Strip any non-numeric characters from both
         $phoneCountryCode = preg_replace('/[^0-9]/', '', $phoneCountryCode);
         $phoneNumber      = preg_replace('/[^0-9]/', '', $phoneNumber);
 
-        // Default to NZ if still empty
         if (empty($phoneCountryCode)) $phoneCountryCode = '64';
         if (empty($phoneNumber))      $phoneNumber      = '000000000';
 
@@ -235,24 +260,28 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'Email'            => $contact->getEmail() ?? 'unknown@unknown.com',
         ];
 
-        // Add organisation if present
         if ($contact->getCompany()) {
             $params['OrganisationName'] = $contact->getCompany();
         }
 
-        $this->getLog()->info('TPP createContact params: ' . json_encode($params));
+        $this->log('TPP createContact params: ' . json_encode($params));
 
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        $this->getLog()->info('TPP createContact response: ' . $response);
+        $this->log('TPP createContact response: ' . $response);
+
+        if ($this->_testMode) {
+            $this->log('TPP createContact: returning fake contact ID in test mode');
+            return 'TEST-CONTACT-ID';
+        }
 
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP contact creation failed: ' . $response);
         }
 
         $contactId = trim(substr($response, 3));
-        $this->getLog()->info('TPP: Created contact ID ' . $contactId);
+        $this->log('TPP createContact: created contact ID ' . $contactId);
 
         return $contactId;
     }
@@ -273,30 +302,26 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function registerDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Registering domain ' . $domain->getName());
+        $this->log('TPP registerDomain: ' . $domain->getName() . ' for ' . $domain->getRegistrationPeriod() . ' year(s)');
 
         $sessionId = $this->authenticate();
-
-        // Step 1: Create contact
         $contactId = $this->createContact($sessionId, $domain);
 
-        // Step 2: Build registration params
         $params = [
-            'SessionID'              => $sessionId,
-            'Type'                   => 'Domains',
-            'Object'                 => 'Domain',
-            'Action'                 => 'Create',
-            'Domain'                 => $domain->getName(),
-            'Period'                 => $domain->getRegistrationPeriod(),
-            'AccountOption'          => 'CONSOLE',
-            'AccountID'              => $this->accountRef,
-            'OwnerContactID'         => $contactId,
-            'AdministrationContactID'=> $contactId,
-            'TechnicalContactID'     => $contactId,
-            'BillingContactID'       => $contactId,
+            'SessionID'               => $sessionId,
+            'Type'                    => 'Domains',
+            'Object'                  => 'Domain',
+            'Action'                  => 'Create',
+            'Domain'                  => $domain->getName(),
+            'Period'                  => $domain->getRegistrationPeriod(),
+            'AccountOption'           => 'CONSOLE',
+            'AccountID'               => $this->accountRef,
+            'OwnerContactID'          => $contactId,
+            'AdministrationContactID' => $contactId,
+            'TechnicalContactID'      => $contactId,
+            'BillingContactID'        => $contactId,
         ];
 
-        // Step 3: Add nameservers if provided
         $nameservers = array_filter([
             $domain->getNs1(),
             $domain->getNs2(),
@@ -304,54 +329,56 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             $domain->getNs4(),
         ]);
 
-        $this->getLog()->info('TPP registerDomain nameservers: ' . json_encode($nameservers));
+        $this->log('TPP registerDomain nameservers: ' . json_encode($nameservers));
 
-        // TPP uses multiple Host params — build query manually
         $query = http_build_query($params);
         foreach ($nameservers as $ns) {
             $query .= '&Host=' . urlencode($ns);
         }
 
-        // Step 4: Add .au eligibility fields if required
         if ($this->isAuDomain($domain->getName())) {
             $auFields = $this->getAuEligibilityFields($domain);
+            $this->log('TPP registerDomain .au eligibility fields: ' . json_encode($auFields));
             foreach ($auFields as $key => $value) {
                 $query .= '&' . urlencode($key) . '=' . urlencode($value);
             }
         }
 
-        $this->getLog()->info('TPP registerDomain query: ' . $query);
-        
+        $this->log('TPP registerDomain full query: ' . $query);
+
         $url      = self::API_BASE . 'order.pl?' . $query;
         $response = $this->httpGet($url);
 
-        // Response: "OK: OrderID"
+        $this->log('TPP registerDomain response: ' . $response);
+
+        if ($this->_testMode) {
+            $this->log('TPP registerDomain: test mode — domain NOT registered with TPP');
+            return true;
+        }
+
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP domain registration failed: ' . $response);
         }
 
         $orderId = trim(substr($response, 3));
-        $this->getLog()->info('TPP: Registration order placed, Order ID: ' . $orderId);
+        $this->log('TPP registerDomain: order placed, Order ID: ' . $orderId);
 
         return true;
     }
 
     /**
      * Get .au eligibility fields from domain additional fields
-     * These are collected on the order form for .au domains
      */
     private function getAuEligibilityFields(Registrar_Domain $domain): array
     {
-        // These come from custom order form fields we'll add later
-        // For now return sensible defaults that work for most business registrants
         return [
-            'RegistrantName'   => $domain->getContactRegistrar()->getCompany()
-                                  ?? $domain->getContactRegistrar()->getFirstName() . ' '
-                                  . $domain->getContactRegistrar()->getLastName(),
-            'RegistrantID'     => $domain->getParam('abn') ?? '',
-            'RegistrantIDType' => '2', // ABN
-            'EligibilityType'  => '5', // Company
-            'EligibilityReason'=> '2', // Close and substantial connection
+            'RegistrantName'    => $domain->getContactRegistrar()->getCompany()
+                                   ?? $domain->getContactRegistrar()->getFirstName() . ' '
+                                   . $domain->getContactRegistrar()->getLastName(),
+            'RegistrantID'      => $domain->getParam('abn') ?? '',
+            'RegistrantIDType'  => '2', // ABN
+            'EligibilityType'   => '5', // Company
+            'EligibilityReason' => '2', // Close and substantial connection
         ];
     }
 
@@ -360,7 +387,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function renewDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Renewing domain ' . $domain->getName());
+        $this->log('TPP renewDomain: ' . $domain->getName() . ' for ' . $domain->getRegistrationPeriod() . ' year(s)');
 
         $sessionId = $this->authenticate();
 
@@ -373,15 +400,24 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'Period'    => $domain->getRegistrationPeriod(),
         ];
 
+        $this->log('TPP renewDomain params: ' . json_encode($params));
+
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
+
+        $this->log('TPP renewDomain response: ' . $response);
+
+        if ($this->_testMode) {
+            $this->log('TPP renewDomain: test mode — domain NOT renewed with TPP');
+            return true;
+        }
 
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP domain renewal failed: ' . $response);
         }
 
         $orderId = trim(substr($response, 3));
-        $this->getLog()->info('TPP: Renewal order placed, Order ID: ' . $orderId);
+        $this->log('TPP renewDomain: order placed, Order ID: ' . $orderId);
 
         return true;
     }
@@ -391,11 +427,9 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function transferDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Transferring domain ' . $domain->getName());
+        $this->log('TPP transferDomain: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
-
-        // Create contact first
         $contactId = $this->createContact($sessionId, $domain);
 
         $params = [
@@ -413,20 +447,28 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'BillingContactID'        => $contactId,
         ];
 
-        // Add renewal period if specified
         if ($domain->getRegistrationPeriod()) {
             $params['Period'] = $domain->getRegistrationPeriod();
         }
 
+        $this->log('TPP transferDomain params: ' . json_encode($params));
+
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
+
+        $this->log('TPP transferDomain response: ' . $response);
+
+        if ($this->_testMode) {
+            $this->log('TPP transferDomain: test mode — domain NOT transferred with TPP');
+            return true;
+        }
 
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP domain transfer failed: ' . $response);
         }
 
         $orderId = trim(substr($response, 3));
-        $this->getLog()->info('TPP: Transfer order placed, Order ID: ' . $orderId);
+        $this->log('TPP transferDomain: order placed, Order ID: ' . $orderId);
 
         return true;
     }
@@ -436,7 +478,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function getDomainDetails(Registrar_Domain $domain): Registrar_Domain
     {
-        $this->getLog()->info('TPP: Getting details for ' . $domain->getName());
+        $this->log('TPP getDomainDetails: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -451,20 +493,30 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         $url      = self::API_BASE . 'query.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
+        $this->log('TPP getDomainDetails response: ' . $response);
+
+        if ($this->_testMode) {
+            $this->log('TPP getDomainDetails: test mode — returning domain object unchanged');
+            if (!$domain->getRegistrationTime()) {
+                $domain->setRegistrationTime(time());
+            }
+            if (!$domain->getExpirationTime()) {
+                $years = $domain->getRegistrationPeriod();
+                $domain->setExpirationTime(strtotime("+$years year"));
+            }
+            return $domain;
+        }
+
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP domain details failed: ' . $response);
         }
 
-        // Response is multi-line key=value pairs after "OK:"
-        // e.g. ExpiryDate=2026-06-05\nNameserver=ns1.tppwholesale.com.au\n...
         $data = $this->parseKeyValueResponse($response);
 
-        // Set expiry date if available
         if (isset($data['ExpiryDate'])) {
             $domain->setExpirationTime(strtotime($data['ExpiryDate']));
         }
 
-        // Set nameservers if available
         if (isset($data['Nameserver'])) {
             $nameservers = is_array($data['Nameserver'])
                 ? $data['Nameserver']
@@ -476,7 +528,6 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             if (isset($nameservers[3])) $domain->setNs4($nameservers[3]);
         }
 
-        // Set lock status
         if (isset($data['LockStatus'])) {
             $domain->setLocked($data['LockStatus'] === '2');
         }
@@ -485,8 +536,8 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     }
 
     /**
-     * Parse TPP's key=value multi-line response format into an array
-     * Handles duplicate keys (like multiple Nameserver entries) as arrays
+     * Parse TPP's key=value multi-line response format into an array.
+     * Handles duplicate keys (like multiple Nameserver entries) as arrays.
      */
     private function parseKeyValueResponse(string $response): array
     {
@@ -496,7 +547,6 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         foreach ($lines as $line) {
             $line = trim($line);
 
-            // Skip the OK: header line
             if ($line === 'OK:' || $line === '') {
                 continue;
             }
@@ -509,7 +559,6 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             $key   = trim($key);
             $value = trim($value);
 
-            // Handle duplicate keys — TPP returns multiple Nameserver lines
             if (isset($data[$key])) {
                 if (!is_array($data[$key])) {
                     $data[$key] = [$data[$key]];
@@ -528,11 +577,19 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function modifyNs(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Updating nameservers for ' . $domain->getName());
+        $this->log('TPP modifyNs: ' . $domain->getName());
+
+        $nameservers = array_filter([
+            $domain->getNs1(),
+            $domain->getNs2(),
+            $domain->getNs3(),
+            $domain->getNs4(),
+        ]);
+
+        $this->log('TPP modifyNs nameservers: ' . json_encode($nameservers));
 
         $sessionId = $this->authenticate();
 
-        // First remove all existing hosts, then add new ones
         $params = [
             'SessionID'  => $sessionId,
             'Type'       => 'Domains',
@@ -542,22 +599,21 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'RemoveHost' => 'ALL',
         ];
 
-        // Build query manually to support multiple AddHost params
         $query = http_build_query($params);
-
-        $nameservers = array_filter([
-            $domain->getNs1(),
-            $domain->getNs2(),
-            $domain->getNs3(),
-            $domain->getNs4(),
-        ]);
-
         foreach ($nameservers as $ns) {
             $query .= '&AddHost=' . urlencode($ns);
         }
 
+        $this->log('TPP modifyNs query: ' . $query);
+
         $url      = self::API_BASE . 'order.pl?' . $query;
         $response = $this->httpGet($url);
+
+        $this->log('TPP modifyNs response: ' . $response);
+
+        if ($this->_testMode) {
+            return true;
+        }
 
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP nameserver update failed: ' . $response);
@@ -571,14 +627,11 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function modifyContact(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Updating contact for ' . $domain->getName());
+        $this->log('TPP modifyContact: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
-
-        // Create a new contact with updated details
         $contactId = $this->createContact($sessionId, $domain);
 
-        // Assign new contact to all roles on the domain
         $params = [
             'SessionID'               => $sessionId,
             'Type'                    => 'Domains',
@@ -591,14 +644,21 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'BillingContactID'        => $contactId,
         ];
 
+        $this->log('TPP modifyContact params: ' . json_encode($params));
+
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        // Note from API docs: update of contact will not work for .nz domains
-        // We log but don't throw for .nz to avoid breaking the workflow
+        $this->log('TPP modifyContact response: ' . $response);
+
+        if ($this->_testMode) {
+            return true;
+        }
+
         if (!str_starts_with($response, 'OK:')) {
+            // .nz domains do not support contact updates via API
             if (str_ends_with($domain->getName(), '.nz')) {
-                $this->getLog()->info('TPP: Contact update not supported for .nz domains');
+                $this->log('TPP modifyContact: contact update not supported for .nz domains');
                 return true;
             }
             throw new Registrar_Exception('TPP contact update failed: ' . $response);
@@ -612,28 +672,33 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function getEpp(Registrar_Domain $domain): string
     {
-        $this->getLog()->info('TPP: Getting EPP code for ' . $domain->getName());
+        $this->log('TPP getEpp: ' . $domain->getName());
+
+        if ($this->_testMode) {
+            $this->log('TPP getEpp: returning fake EPP code in test mode');
+            return 'TEST-EPP-CODE';
+        }
 
         $sessionId = $this->authenticate();
 
         $params = [
-            'SessionID' => $sessionId,
-            'Type'      => 'Domains',
-            'Object'    => 'Domain',
-            'Action'    => 'SyncPass',
-            'Domain'    => $domain->getName(),
+            'SessionID'     => $sessionId,
+            'Type'          => 'Domains',
+            'Object'        => 'Domain',
+            'Action'        => 'SyncPass',
+            'Domain'        => $domain->getName(),
             'resetIfVirgin' => 'True',
         ];
 
         $url      = self::API_BASE . 'query.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        // Response: "domain.co.nz: OK: User=xxx&Pass=yyy"
+        $this->log('TPP getEpp response: ' . $response);
+
         if (!str_contains($response, 'OK:')) {
             throw new Registrar_Exception('TPP EPP retrieval failed: ' . $response);
         }
 
-        // Extract the Pass value
         if (preg_match('/Pass=([^&\s]+)/', $response, $matches)) {
             return $matches[1];
         }
@@ -646,7 +711,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function lock(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Locking domain ' . $domain->getName());
+        $this->log('TPP lock: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -659,12 +724,15 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'DomainLock' => 'Lock',
         ];
 
+        $this->log('TPP lock params: ' . json_encode($params));
+
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        if (!str_starts_with($response, 'OK:')) {
-            // Some TLDs don't support locking — log but don't fail
-            $this->getLog()->info('TPP: Lock not supported or failed: ' . $response);
+        $this->log('TPP lock response: ' . $response);
+
+        if (!$this->_testMode && !str_starts_with($response, 'OK:')) {
+            $this->log('TPP lock: not supported or failed: ' . $response);
         }
 
         return true;
@@ -675,7 +743,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function unlock(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Unlocking domain ' . $domain->getName());
+        $this->log('TPP unlock: ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -688,36 +756,36 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'DomainLock' => 'Unlock',
         ];
 
+        $this->log('TPP unlock params: ' . json_encode($params));
+
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        if (!str_starts_with($response, 'OK:')) {
-            $this->getLog()->info('TPP: Unlock not supported or failed: ' . $response);
+        $this->log('TPP unlock response: ' . $response);
+
+        if (!$this->_testMode && !str_starts_with($response, 'OK:')) {
+            $this->log('TPP unlock: not supported or failed: ' . $response);
         }
 
         return true;
     }
 
     /**
-     * Delete a domain — TPP doesn't support direct deletion via API
-     * Log the request and return true to avoid breaking FOSSBilling workflow
+     * Delete a domain — TPP does not support direct deletion via API.
+     * Logs the request and returns true to avoid breaking FOSSBilling workflow.
      */
     public function deleteDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Delete requested for ' . $domain->getName()
-            . ' — must be completed manually in TPP console');
-
+        $this->log('TPP deleteDomain: ' . $domain->getName() . ' — must be completed manually in TPP console');
         return true;
     }
 
     /**
      * Privacy protection — not supported by TPP Wholesale
-     * Return true to avoid breaking FOSSBilling workflow
      */
     public function enablePrivacyProtection(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Privacy protection not supported for ' . $domain->getName());
-
+        $this->log('TPP enablePrivacyProtection: not supported for ' . $domain->getName());
         return true;
     }
 
@@ -726,8 +794,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function disablePrivacyProtection(Registrar_Domain $domain): bool
     {
-        $this->getLog()->info('TPP: Privacy protection not supported for ' . $domain->getName());
-
+        $this->log('TPP disablePrivacyProtection: not supported for ' . $domain->getName());
         return true;
     }
 
