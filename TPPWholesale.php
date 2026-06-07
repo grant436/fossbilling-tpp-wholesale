@@ -124,7 +124,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function isDomainAvailable(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Checking availability for ' . $domain->getName());
+        $this->getLog()->info('TPP: Checking availability for ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -140,7 +140,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
 
         // Response format: "domain.co.nz: OK: Minimum=1&Maximum=10"
         // or "domain.co.nz: ERR: 304,Domain is not available"
-        $this->getLog()->debug('TPP availability response: ' . $response);
+        $this->getLog()->info('TPP availability response: ' . $response);
 
         // Domain is available if response contains OK:
         if (str_contains($response, 'OK:')) {
@@ -160,7 +160,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function isDomaincanBeTransferred(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Checking transfer eligibility for ' . $domain->getName());
+        $this->getLog()->info('TPP: Checking transfer eligibility for ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -190,7 +190,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         $contact = $domain->getContactRegistrar();
 
         // Log all contact details for debugging
-        $this->getLog()->debug('TPP createContact details: ' . json_encode([
+        $this->getLog()->info('TPP createContact details: ' . json_encode([
             'firstName'  => $contact->getFirstName(),
             'lastName'   => $contact->getLastName(),
             'email'      => $contact->getEmail(),
@@ -240,19 +240,19 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             $params['OrganisationName'] = $contact->getCompany();
         }
 
-        $this->getLog()->debug('TPP createContact params: ' . json_encode($params));
+        $this->getLog()->info('TPP createContact params: ' . json_encode($params));
 
         $url      = self::API_BASE . 'order.pl?' . http_build_query($params);
         $response = $this->httpGet($url);
 
-        $this->getLog()->debug('TPP createContact response: ' . $response);
+        $this->getLog()->info('TPP createContact response: ' . $response);
 
         if (!str_starts_with($response, 'OK:')) {
             throw new Registrar_Exception('TPP contact creation failed: ' . $response);
         }
 
         $contactId = trim(substr($response, 3));
-        $this->getLog()->debug('TPP: Created contact ID ' . $contactId);
+        $this->getLog()->info('TPP: Created contact ID ' . $contactId);
 
         return $contactId;
     }
@@ -273,7 +273,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function registerDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Registering domain ' . $domain->getName());
+        $this->getLog()->info('TPP: Registering domain ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -304,6 +304,8 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             $domain->getNs4(),
         ]);
 
+        $this->getLog()->info('TPP registerDomain nameservers: ' . json_encode($nameservers));
+
         // TPP uses multiple Host params — build query manually
         $query = http_build_query($params);
         foreach ($nameservers as $ns) {
@@ -318,6 +320,8 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             }
         }
 
+        $this->getLog()->info('TPP registerDomain query: ' . $query);
+        
         $url      = self::API_BASE . 'order.pl?' . $query;
         $response = $this->httpGet($url);
 
@@ -327,7 +331,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         }
 
         $orderId = trim(substr($response, 3));
-        $this->getLog()->debug('TPP: Registration order placed, Order ID: ' . $orderId);
+        $this->getLog()->info('TPP: Registration order placed, Order ID: ' . $orderId);
 
         return true;
     }
@@ -356,7 +360,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function renewDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Renewing domain ' . $domain->getName());
+        $this->getLog()->info('TPP: Renewing domain ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -377,7 +381,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         }
 
         $orderId = trim(substr($response, 3));
-        $this->getLog()->debug('TPP: Renewal order placed, Order ID: ' . $orderId);
+        $this->getLog()->info('TPP: Renewal order placed, Order ID: ' . $orderId);
 
         return true;
     }
@@ -387,7 +391,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function transferDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Transferring domain ' . $domain->getName());
+        $this->getLog()->info('TPP: Transferring domain ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -422,7 +426,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         }
 
         $orderId = trim(substr($response, 3));
-        $this->getLog()->debug('TPP: Transfer order placed, Order ID: ' . $orderId);
+        $this->getLog()->info('TPP: Transfer order placed, Order ID: ' . $orderId);
 
         return true;
     }
@@ -432,7 +436,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function getDomainDetails(Registrar_Domain $domain): Registrar_Domain
     {
-        $this->getLog()->debug('TPP: Getting details for ' . $domain->getName());
+        $this->getLog()->info('TPP: Getting details for ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -524,7 +528,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function modifyNs(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Updating nameservers for ' . $domain->getName());
+        $this->getLog()->info('TPP: Updating nameservers for ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -567,7 +571,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function modifyContact(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Updating contact for ' . $domain->getName());
+        $this->getLog()->info('TPP: Updating contact for ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -594,7 +598,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         // We log but don't throw for .nz to avoid breaking the workflow
         if (!str_starts_with($response, 'OK:')) {
             if (str_ends_with($domain->getName(), '.nz')) {
-                $this->getLog()->debug('TPP: Contact update not supported for .nz domains');
+                $this->getLog()->info('TPP: Contact update not supported for .nz domains');
                 return true;
             }
             throw new Registrar_Exception('TPP contact update failed: ' . $response);
@@ -608,7 +612,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function getEpp(Registrar_Domain $domain): string
     {
-        $this->getLog()->debug('TPP: Getting EPP code for ' . $domain->getName());
+        $this->getLog()->info('TPP: Getting EPP code for ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -642,7 +646,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function lock(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Locking domain ' . $domain->getName());
+        $this->getLog()->info('TPP: Locking domain ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -660,7 +664,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
 
         if (!str_starts_with($response, 'OK:')) {
             // Some TLDs don't support locking — log but don't fail
-            $this->getLog()->debug('TPP: Lock not supported or failed: ' . $response);
+            $this->getLog()->info('TPP: Lock not supported or failed: ' . $response);
         }
 
         return true;
@@ -671,7 +675,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function unlock(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Unlocking domain ' . $domain->getName());
+        $this->getLog()->info('TPP: Unlocking domain ' . $domain->getName());
 
         $sessionId = $this->authenticate();
 
@@ -688,7 +692,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         $response = $this->httpGet($url);
 
         if (!str_starts_with($response, 'OK:')) {
-            $this->getLog()->debug('TPP: Unlock not supported or failed: ' . $response);
+            $this->getLog()->info('TPP: Unlock not supported or failed: ' . $response);
         }
 
         return true;
@@ -700,7 +704,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function deleteDomain(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Delete requested for ' . $domain->getName()
+        $this->getLog()->info('TPP: Delete requested for ' . $domain->getName()
             . ' — must be completed manually in TPP console');
 
         return true;
@@ -712,7 +716,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function enablePrivacyProtection(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Privacy protection not supported for ' . $domain->getName());
+        $this->getLog()->info('TPP: Privacy protection not supported for ' . $domain->getName());
 
         return true;
     }
@@ -722,7 +726,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
      */
     public function disablePrivacyProtection(Registrar_Domain $domain): bool
     {
-        $this->getLog()->debug('TPP: Privacy protection not supported for ' . $domain->getName());
+        $this->getLog()->info('TPP: Privacy protection not supported for ' . $domain->getName());
 
         return true;
     }
