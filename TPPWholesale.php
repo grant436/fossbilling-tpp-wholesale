@@ -615,13 +615,13 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             'RemoveHost' => 'ALL',
         ];
 
-        $query = http_build_query($params);
+         $query = http_build_query($params);
         foreach ($nameservers as $ns) {
-            $query .= '&AddHost=' . urlencode($ns);
+            $query .= '&Host=' . urlencode($ns);
         }
 
         $this->log('TPP modifyNs query: ' . $query);
-
+        
         $url      = self::API_BASE . 'order.pl?' . $query;
         $response = $this->httpGet($url);
 
