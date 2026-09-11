@@ -702,7 +702,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
  
         $query = http_build_query($params);
         foreach ($nameservers as $ns) {
-            $query .= '&Host=' . urlencode($ns);
+            $query .= '&AddHost=' . urlencode($ns);
         }
  
         $url      = self::API_BASE . 'order.pl?' . $query;
