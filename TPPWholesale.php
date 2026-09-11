@@ -9,19 +9,27 @@ declare(strict_types=1);
  * @license http://www.apache.org/licenses/LICENSE-2.0 Apache-2.0
  * @link https://github.com/grant436/fossbilling-tpp-wholesale
  * @author Grant Charsley
- * @version 1.1.0
+ * @version 1.2.0
  * @since 2026-06-07 Initial release (v1.0.0)
  * @updated 2026-09-11 Fixed registerDomain()/getDomainDetails() never persisting
  *   registration/expiration dates; fixed modifyNs() sending the wrong TPP
  *   parameter name (AddHost instead of Host), which caused nameserver
  *   updates to fail; added a Debug Logging config flag with centralized
- *   request/response logging for all TPP API calls.
+ *   request/response logging for all TPP API calls; module now writes to
+ *   its own dedicated log file instead of relying on FOSSBilling's
+ *   getLog(), which is unreliable — some call paths (e.g.
+ *   updateNameservers()) never set a proper logger context and silently
+ *   fall back to writing into a database table instead of a file.
  */
  
 class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
 {
     // TPP API base URL
     private const API_BASE = 'https://theconsole.tppwholesale.com.au/api/';
+ 
+    // Dedicated log file — written to directly, bypassing FOSSBilling's
+    // getLog(), which does not reliably write to a file for every call path.
+    private const LOG_FILE = '/var/www/html/data/log/tppwholesale.log';
  
     // Credentials stored from config
     private string $accountNo;
@@ -33,7 +41,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     // When enabled, every outgoing TPP request and its raw response is
     // logged in full. Keeps normal operation logs concise while still
     // allowing deep diagnostics on demand, without a code change.
-    private bool $debug = true; // TEMP: Hardcoded for testing, bypasses config.
+    private bool $debug = false;
  
     /**
      * Constructor - receives config values from FOSSBilling admin settings
@@ -91,7 +99,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
                     'required' => false,
                 ]],
                 'debug' => ['radio', [
-                    'label'        => 'Enable Debug Logging (verbose — logs every request sent to TPP and every response received)',
+                    'label'        => 'Enable Debug Logging (verbose — logs every request sent to TPP and every response received, to /data/log/tppwholesale.log)',
                     'multiOptions' => ['1' => 'Yes', '0' => 'No'],
                     'required'     => false,
                 ]],
@@ -100,28 +108,54 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     }
  
     /**
-     * Log a message at INFO level, prefixed with test mode indicator if active.
+     * Write a line directly to our own dedicated log file. This bypasses
+     * FOSSBilling's getLog(), which is unreliable here — some call paths
+     * (e.g. updateNameservers()) never set a proper logger context and
+     * silently fall back to writing into a database table instead of a
+     * file, making diagnostics painful. Writing our own file guarantees a
+     * single, predictable, always-on-disk location for every log line.
+     */
+    private function writeToLogFile(string $message): void
+    {
+        $line = '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL;
+        @file_put_contents(self::LOG_FILE, $line, FILE_APPEND | LOCK_EX);
+    }
+ 
+    /**
+     * Log a message, prefixed with test mode indicator if active.
      * Used for normal, always-on operational messages (what action is being
      * taken, and its outcome) — kept short so logs don't fill up by default.
+     * Always written to our own dedicated log file; also forwarded to
+     * FOSSBilling's own logger (visible in the admin Activity log) where
+     * possible, but a failure there never affects our own file logging.
      */
     private function log(string $message): void
     {
         $prefix = $this->_testMode ? '[TEST MODE] ' : '';
-        $this->getLog()->info($prefix . $message);
+        $line   = $prefix . $message;
+ 
+        $this->writeToLogFile($line);
+ 
+        try {
+            $this->getLog()->info($line);
+        } catch (\Throwable $e) {
+            // ignore — our own file log above is the reliable source of truth
+        }
     }
  
     /**
      * Log a verbose debug message — only written when Debug Logging is
      * enabled in the module configuration. Used for full request/response
      * dumps so deep diagnostics are available on demand without a code
-     * change and without bloating the log by default.
+     * change and without bloating the log by default. Written only to our
+     * own dedicated log file, not forwarded to FOSSBilling's logger.
      */
     private function debugLog(string $message): void
     {
         if (!$this->debug) {
             return;
         }
-        $this->getLog()->info('[DEBUG] ' . $message);
+        $this->writeToLogFile('[DEBUG] ' . $message);
     }
  
     /**
@@ -848,4 +882,3 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     }
  
 } // End of class
- 
