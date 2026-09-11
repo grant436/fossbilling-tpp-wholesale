@@ -363,6 +363,12 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
         $orderId = trim(substr($response, 3));
         $this->log('TPP registerDomain: order placed, Order ID: ' . $orderId);
 
+        // Persist registration/expiration dates immediately — do not rely solely on
+        // a later getDomainDetails() sync, which may never run or may return an
+        // incomplete response. We know exactly what was just purchased, so set it now.
+        $domain->setRegistrationTime(time());
+        $domain->setExpirationTime(strtotime('+' . $domain->getRegistrationPeriod() . ' year'));
+
         return true;
     }
 
@@ -416,12 +422,15 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
             throw new Registrar_Exception('TPP domain renewal failed: ' . $response);
         }
 
-        $orderId = trim(substr($response, 3));
+         $orderId = trim(substr($response, 3));
         $this->log('TPP renewDomain: order placed, Order ID: ' . $orderId);
+
+        $currentExpiry = $domain->getExpirationTime() ?: time();
+        $domain->setExpirationTime(strtotime('+' . $domain->getRegistrationPeriod() . ' year', $currentExpiry));
 
         return true;
     }
-
+    
     /**
      * Transfer a domain from another registrar to TPP Wholesale
      */
@@ -515,6 +524,13 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
 
         if (isset($data['ExpiryDate'])) {
             $domain->setExpirationTime(strtotime($data['ExpiryDate']));
+        } elseif (!$domain->getExpirationTime()) {
+            $years = $domain->getRegistrationPeriod();
+            $domain->setExpirationTime(strtotime("+$years year"));
+        }
+
+        if (!$domain->getRegistrationTime()) {
+            $domain->setRegistrationTime(time());
         }
 
         if (isset($data['Nameserver'])) {
