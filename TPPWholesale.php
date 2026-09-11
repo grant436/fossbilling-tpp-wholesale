@@ -33,7 +33,7 @@ class Registrar_Adapter_TPPWholesale extends Registrar_AdapterAbstract
     // When enabled, every outgoing TPP request and its raw response is
     // logged in full. Keeps normal operation logs concise while still
     // allowing deep diagnostics on demand, without a code change.
-    private bool $debug = false;
+    private bool $debug = true; // TEMP: Hardcoded for testing, bypasses config.
  
     /**
      * Constructor - receives config values from FOSSBilling admin settings
